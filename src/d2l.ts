@@ -4,8 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { pdfToPng } from 'pdf-to-png-converter';
-import { BASE_URL, LOGIN_HELP } from './config.js';
-import { apiGet, apiGetBinary, apiVersion, AuthError, newPage } from './session.js';
+import { BASE_URL, LOGIN_HELP, OUTLINE_CACHE_DIR } from './config.js';
+import { apiGet, apiGetBinary, apiVersion, AuthError, getContext, newPage } from './session.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -13,6 +13,8 @@ export interface Course {
   name: string;
   ou: number;
   url: string;
+  /** Official course title from outline.uwaterloo.ca, e.g. "Matrices and Linear Systems". */
+  title?: string | null;
 }
 
 function stripHtml(html: string): string {
@@ -190,11 +192,129 @@ export async function getContent(courseId: number) {
 }
 
 const OUTLINE_HOST = 'outline.uwaterloo.ca';
+const OUTLINE_VIEWER_URL = `https://${OUTLINE_HOST}/viewer/`;
+const TERM_RE = /\b(Winter|Spring|Fall)\s+(\d{4})\b/i;
+const COURSE_CODE_RE = /\b[A-Z]{2,}\s*\d{2,4}[A-Z]?\b/g;
 
 export interface CourseOutline {
   url: string;
   title: string;
   text: string;
+}
+
+interface CourseOutlineSnapshot extends CourseOutline {
+  html: string;
+  /** Revision date shown on the outline page ("May 12, 2026"); null if not found. */
+  publishedAt: string | null;
+}
+
+interface CachedCourseOutline extends CourseOutlineSnapshot {
+  schemaVersion: 2;
+  courseId: number;
+  courseName: string | null;
+  fetchedAt: string;
+}
+
+export interface OutlineCacheRefreshResult {
+  fetched: number;
+  skipped: number;
+  failed: number;
+  results: {
+    courseId: number;
+    courseName: string;
+    status: 'fetched' | 'skipped' | 'failed';
+    message?: string;
+  }[];
+}
+
+interface CourseOutlineLookup {
+  codes: string[];
+  term: string | null;
+}
+
+interface ViewerOutlineRow {
+  term: string;
+  course: string;
+  title: string;
+  sections: string;
+  url: string;
+}
+
+function outlineCachePath(courseId: number): string {
+  return path.join(OUTLINE_CACHE_DIR, `${courseId}.json`);
+}
+
+function cachedOutlineToResult(outline: CachedCourseOutline): CourseOutline {
+  return { url: outline.url, title: outline.title, text: outline.text };
+}
+
+function isCachedCourseOutline(value: unknown, courseId: number): value is CachedCourseOutline {
+  if (!value || typeof value !== 'object') return false;
+  const outline = value as Partial<CachedCourseOutline>;
+  return (
+    outline.schemaVersion === 2 &&
+    outline.courseId === courseId &&
+    typeof outline.url === 'string' &&
+    typeof outline.title === 'string' &&
+    typeof outline.text === 'string' &&
+    typeof outline.html === 'string' &&
+    typeof outline.fetchedAt === 'string' &&
+    (typeof outline.publishedAt === 'string' || outline.publishedAt === null)
+  );
+}
+
+async function readCachedOutline(courseId: number): Promise<CachedCourseOutline | null> {
+  try {
+    const raw = await fs.readFile(outlineCachePath(courseId), 'utf8');
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isCachedCourseOutline(parsed, courseId)) {
+      console.warn(`Ignoring invalid cached outline for course ${courseId}.`);
+      return null;
+    }
+    return parsed;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+      console.warn(`Could not read cached outline for course ${courseId}: ${err}`);
+    }
+    return null;
+  }
+}
+
+async function writeCachedOutline(
+  courseId: number,
+  courseName: string | null,
+  outline: CourseOutlineSnapshot,
+): Promise<void> {
+  await fs.mkdir(OUTLINE_CACHE_DIR, { recursive: true });
+  const cache: CachedCourseOutline = {
+    schemaVersion: 2,
+    courseId,
+    courseName,
+    url: outline.url,
+    title: outline.title,
+    text: outline.text,
+    html: outline.html,
+    publishedAt: outline.publishedAt,
+    fetchedAt: new Date().toISOString(),
+  };
+  const file = outlineCachePath(courseId);
+  const tmp = `${file}.${process.pid}.tmp`;
+  await fs.writeFile(tmp, JSON.stringify(cache, null, 2), { mode: 0o600 });
+  await fs.rename(tmp, file);
+  await fs.chmod(file, 0o600).catch(() => {});
+}
+
+function normalizeCourseCode(code: string): string {
+  return code.toUpperCase().replace(/\s+/g, '');
+}
+
+function parseCourseOutlineLookup(courseName: string): CourseOutlineLookup {
+  const termMatch = courseName.match(TERM_RE);
+  const codeMatches = courseName.toUpperCase().match(COURSE_CODE_RE) ?? [];
+  return {
+    codes: [...new Set(codeMatches.map(normalizeCourseCode))],
+    term: termMatch ? `${termMatch[1][0].toUpperCase()}${termMatch[1].slice(1).toLowerCase()} ${termMatch[2]}` : null,
+  };
 }
 
 /** Depth-first search of the TOC for the first link into outline.uwaterloo.ca. */
@@ -214,21 +334,140 @@ function findOutlineUrl(modules: MarshalledModule[]): string | null {
   return null;
 }
 
-/**
- * Fetch the official course outline from outline.uwaterloo.ca. The outline
- * site is SSO-gated separately from LEARN; its session cookie is captured by
- * `npm run login`, so a redirect off-host means that session has expired.
- */
-export async function getCourseOutline(courseId: number): Promise<CourseOutline> {
-  const modules = await getContent(courseId);
-  const outlineUrl = findOutlineUrl(modules);
-  if (!outlineUrl) {
-    throw new Error(
-      `No outline.uwaterloo.ca link found in course ${courseId}'s content. ` +
-        'Some courses upload the outline as a PDF instead — use get_content to look for an outline/syllabus file.',
-    );
-  }
+async function findCourse(courseId: number): Promise<Course | null> {
+  const courses = await listCourses();
+  return courses.find((course) => course.ou === courseId) ?? null;
+}
 
+async function scrapeViewerOutlines(): Promise<ViewerOutlineRow[]> {
+  const page = await newPage();
+  try {
+    await page.goto(OUTLINE_VIEWER_URL, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+    if (new URL(page.url()).host !== OUTLINE_HOST) {
+      throw new AuthError(
+        `Redirected to ${page.url()} — the outline.uwaterloo.ca session is missing or expired. ${LOGIN_HELP}`,
+      );
+    }
+
+    await page
+      .waitForSelector('a[href*="/viewer/view/"]', { timeout: 15_000 })
+      .catch(() => {});
+
+    return await page.evaluate(() => {
+      const rows: ViewerOutlineRow[] = [];
+      for (const heading of document.querySelectorAll('h3')) {
+        const term = heading.textContent?.trim() ?? '';
+        const section = heading.closest('div');
+        if (!term || !section) continue;
+
+        for (const row of section.querySelectorAll('tbody tr')) {
+          const cells = [...row.querySelectorAll('td')].map((cell) => cell.textContent?.trim() ?? '');
+          const link = row.querySelector<HTMLAnchorElement>('a[href*="/viewer/view/"]');
+          if (!cells[0] || !link?.href) continue;
+          rows.push({
+            term,
+            course: cells[0],
+            title: cells[1] ?? '',
+            sections: cells[2] ?? '',
+            url: link.href,
+          });
+        }
+      }
+      return rows;
+    });
+  } finally {
+    await page.close();
+  }
+}
+
+let viewerOutlineCache: { rows: ViewerOutlineRow[]; at: number } | null = null;
+let viewerOutlineFailureAt = 0;
+const VIEWER_CACHE_TTL_MS = 30 * 60 * 1000;
+
+/** Viewer rows, cached so list_courses and get_course_outline share one scrape. */
+async function getViewerOutlines(): Promise<ViewerOutlineRow[]> {
+  if (viewerOutlineCache && Date.now() - viewerOutlineCache.at < VIEWER_CACHE_TTL_MS) {
+    return viewerOutlineCache.rows;
+  }
+  const rows = await scrapeViewerOutlines();
+  viewerOutlineCache = { rows, at: Date.now() };
+  viewerOutlineFailureAt = 0;
+  return rows;
+}
+
+async function findOutlineUrlFromViewer(course: Course): Promise<string | null> {
+  const lookup = parseCourseOutlineLookup(course.name);
+  if (lookup.codes.length === 0 || !lookup.term) return null;
+
+  const rows = await getViewerOutlines();
+  const match = rows.find(
+    (row) =>
+      row.term.toLowerCase() === lookup.term?.toLowerCase() &&
+      lookup.codes.includes(normalizeCourseCode(row.course)),
+  );
+  return match?.url ?? null;
+}
+
+function findViewerRow(rows: ViewerOutlineRow[], lookup: CourseOutlineLookup): ViewerOutlineRow | undefined {
+  const byCode = rows.filter((row) => lookup.codes.includes(normalizeCourseCode(row.course)));
+  // Titles are stable across terms, so any term's row will do when the LEARN
+  // name's term is absent or doesn't match a viewer section.
+  return byCode.find((row) => row.term.toLowerCase() === lookup.term?.toLowerCase()) ?? byCode[0];
+}
+
+/**
+ * Courses enriched with their official titles from the outline.uwaterloo.ca
+ * viewer (LEARN names are just code + term, e.g. "SYDE 114 - Spring 2026").
+ * If the outline session isn't configured or the scrape fails, courses are
+ * returned with title: null rather than erroring.
+ */
+export async function listCoursesWithTitles(): Promise<Course[]> {
+  const courses = await listCourses();
+  let rows: ViewerOutlineRow[] = [];
+  // Remember a failed scrape for the cache TTL so a missing outline session
+  // doesn't add a doomed page load to every list_courses call.
+  if (Date.now() - viewerOutlineFailureAt >= VIEWER_CACHE_TTL_MS) {
+    try {
+      rows = await getViewerOutlines();
+    } catch (err) {
+      viewerOutlineFailureAt = Date.now();
+      console.error(`Outline viewer titles unavailable (${err}); returning LEARN names only.`);
+    }
+  }
+  return courses.map((course) => {
+    const row = findViewerRow(rows, parseCourseOutlineLookup(course.name));
+    return { ...course, title: row?.title.trim() || null };
+  });
+}
+
+/**
+ * Revision date from the outline page, e.g. 'Published May 12, 2026 (latest)'
+ * → "May 12, 2026". Single-revision outlines omit the "(latest)" suffix, so
+ * match the date shape itself.
+ */
+function parsePublishedDate(html: string): string | null {
+  const m = html.match(/revision-current[^>]*>\s*Published\s+([A-Za-z]+\s+\d{1,2},\s+\d{4})/);
+  return m ? m[1].replace(/\s+/g, ' ').trim() : null;
+}
+
+/**
+ * The outline page is server-rendered, so a plain GET with the session cookies
+ * is enough to read the current revision date — no browser render needed.
+ * Returns null when the check is impossible (expired session redirects to SSO,
+ * network error), so callers fall back to the cached copy.
+ */
+async function fetchPublishedDate(outlineUrl: string): Promise<string | null> {
+  try {
+    const ctx = await getContext();
+    const resp = await ctx.request.get(outlineUrl, { maxRedirects: 0 });
+    if (resp.status() !== 200) return null;
+    return parsePublishedDate(await resp.text());
+  } catch {
+    return null;
+  }
+}
+
+async function fetchOutlinePageSnapshot(outlineUrl: string): Promise<CourseOutlineSnapshot> {
   const page = await newPage();
   try {
     await page.goto(outlineUrl, { waitUntil: 'networkidle', timeout: 60_000 });
@@ -239,14 +478,123 @@ export async function getCourseOutline(courseId: number): Promise<CourseOutline>
     }
     const title = await page.title();
     const raw = await page.evaluate(() => document.body.innerText);
-    return { url: outlineUrl, title, text: raw.replace(/\n{3,}/g, '\n\n').trim() };
+    const html = await page.content();
+    return {
+      url: page.url(),
+      title,
+      text: raw.replace(/\n{3,}/g, '\n\n').trim(),
+      html,
+      publishedAt: parsePublishedDate(html),
+    };
   } finally {
     await page.close();
   }
 }
 
-const MAX_PAGES = 75;
-const VIEWPORT_SCALE = 2;
+async function fetchLiveCourseOutline(courseId: number, course: Course | null): Promise<CourseOutlineSnapshot> {
+  let viewerError: unknown = null;
+  if (course) {
+    try {
+      const viewerOutlineUrl = await findOutlineUrlFromViewer(course);
+      if (viewerOutlineUrl) return fetchOutlinePageSnapshot(viewerOutlineUrl);
+    } catch (err) {
+      if (err instanceof AuthError) throw err;
+      viewerError = err;
+      console.error(`Outline viewer lookup failed for ${course.name} (${courseId}): ${err}`);
+    }
+  }
+
+  const modules = await getContent(courseId);
+  const outlineUrl = findOutlineUrl(modules);
+  if (outlineUrl) return fetchOutlinePageSnapshot(outlineUrl);
+
+  const viewerNote =
+    viewerError instanceof Error ? ` Outline viewer lookup also failed: ${viewerError.message}` : '';
+  throw new Error(
+    `No outline.uwaterloo.ca outline found for course ${course?.name ?? courseId}. ` +
+      'The course may not use Outline.uwaterloo.ca, or it may upload the outline as a PDF instead. ' +
+      `Use get_content to look for an outline/syllabus file.${viewerNote}`,
+  );
+}
+
+// Cached outlines never expire on their own; instead each read is allowed one
+// cheap revision-date probe per interval, and a full refetch only happens when
+// the outline page reports a new published revision.
+const REVISION_CHECK_INTERVAL_MS = 30 * 60 * 1000;
+const revisionCheckedAt = new Map<number, number>();
+
+/**
+ * Fetch the official course outline from outline.uwaterloo.ca. The outline
+ * site is SSO-gated separately from LEARN; its session cookie is captured by
+ * `npm run login`, so a redirect off-host means that session has expired.
+ */
+export async function getCourseOutline(courseId: number): Promise<CourseOutline> {
+  const cached = await readCachedOutline(courseId);
+  if (cached) {
+    const lastChecked = revisionCheckedAt.get(courseId) ?? 0;
+    if (Date.now() - lastChecked < REVISION_CHECK_INTERVAL_MS) {
+      return cachedOutlineToResult(cached);
+    }
+    const published = await fetchPublishedDate(cached.url);
+    revisionCheckedAt.set(courseId, Date.now());
+    if (published === null || published === cached.publishedAt) {
+      return cachedOutlineToResult(cached);
+    }
+    console.error(
+      `Outline for course ${courseId} has a new revision (published ${published}); refetching.`,
+    );
+  }
+
+  const course = await findCourse(courseId);
+  let outline: CourseOutlineSnapshot;
+  try {
+    outline = await fetchLiveCourseOutline(courseId, course);
+  } catch (err) {
+    if (cached) {
+      console.warn(`Refetch of updated outline for course ${courseId} failed (${err}); serving cached copy.`);
+      return cachedOutlineToResult(cached);
+    }
+    throw err;
+  }
+  await writeCachedOutline(courseId, course?.name ?? null, outline).catch((err) => {
+    console.warn(`Could not cache outline for course ${courseId}: ${err}`);
+  });
+  return { url: outline.url, title: outline.title, text: outline.text };
+}
+
+export async function refreshOutlineCache(): Promise<OutlineCacheRefreshResult> {
+  const courses = await listCourses();
+  const results: OutlineCacheRefreshResult['results'] = [];
+
+  for (const course of courses) {
+    try {
+      const outline = await fetchLiveCourseOutline(course.ou, course);
+      await writeCachedOutline(course.ou, course.name, outline);
+      results.push({ courseId: course.ou, courseName: course.name, status: 'fetched' });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const status = message.includes('No outline.uwaterloo.ca outline found') ? 'skipped' : 'failed';
+      results.push({ courseId: course.ou, courseName: course.name, status, message });
+    }
+  }
+
+  return {
+    fetched: results.filter((result) => result.status === 'fetched').length,
+    skipped: results.filter((result) => result.status === 'skipped').length,
+    failed: results.filter((result) => result.status === 'failed').length,
+    results,
+  };
+}
+
+// Image tokens scale with pixel area, so the render targets a fixed output
+// size instead of a fixed multiplier (intrinsic PDF page sizes vary wildly).
+// ~800px on the long edge ≈ scale 1.0 for letter pages: ~650 tokens/page,
+// still legible for handwritten lecture notes.
+const TARGET_LONG_EDGE_PX = 800;
+// 30 pages ≈ 20k tokens, fitting Claude Code's stock 25k MAX_MCP_OUTPUT_TOKENS
+// with headroom — past the cap, the failure mode is the explicit continuation
+// note below, not the client silently dropping trailing pages.
+const MAX_PAGES = 30;
 
 export interface TopicFileResult {
   filename: string;
@@ -353,8 +701,10 @@ export async function getTopicFile(
     );
   }
 
-  const meta = await pdfToPng(pdf, { returnMetadataOnly: true });
+  const meta = await pdfToPng(pdf, { returnMetadataOnly: true, viewportScale: 1 });
   const totalPages = meta.length;
+  const longEdgePts = Math.max(meta[0]?.width ?? 0, meta[0]?.height ?? 0);
+  const viewportScale = longEdgePts > 0 ? Math.min(2, TARGET_LONG_EDGE_PX / longEdgePts) : 1;
 
   let pagesToProcess = pagesSpec ? parsePages(pagesSpec) : Array.from({ length: totalPages }, (_, i) => i + 1);
   pagesToProcess = pagesToProcess.filter((p) => p <= totalPages);
@@ -368,7 +718,7 @@ export async function getTopicFile(
       `Rendered the first ${MAX_PAGES} of ${totalPages} pages. ` +
       `Call again with pages="${pagesToProcess[MAX_PAGES - 1] + 1}-${totalPages}" for the rest.`;
   }
-  const rendered = await pdfToPng(pdf, { viewportScale: VIEWPORT_SCALE, pagesToProcess });
+  const rendered = await pdfToPng(pdf, { viewportScale, pagesToProcess });
   return {
     filename,
     totalPages,
