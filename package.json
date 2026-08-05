@@ -1,21 +1,15 @@
 {
   "name": "waterloo-learn-mcp",
   "version": "0.1.0",
-  "description": "",
+  "description": "Read-only local MCP server for University of Waterloo LEARN",
   "main": "dist/index.js",
   "scripts": {
     "test": "npm run build && node --test tests/*.test.mjs",
+    "setup": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup.ps1",
     "build": "tsc",
     "login": "tsx scripts/login.ts",
     "start": "node dist/index.js",
-    "dev": "tsx src/index.ts",
-    "start:http": "node dist/http.js",
-    "start:ngrok": "bash scripts/ngrok-start.sh",
-    "dev:http": "tsx src/http.ts",
-    "setup:tailscale": "bash scripts/tailscale-setup.sh",
-    "setup:ngrok": "bash scripts/ngrok-setup.sh",
-    "autostart:http": "bash scripts/http-autostart.sh",
-    "stop:http": "bash scripts/http-stop.sh"
+    "dev": "tsx src/index.ts"
   },
   "repository": {
     "type": "git",

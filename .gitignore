@@ -4,16 +4,11 @@ dist/
 # Saved Playwright session — contains live auth cookies. Never commit.
 auth.json
 
-# OAuth clients/tokens issued to web chat connectors. Never commit.
-oauth.json
-
-# Local secrets/config for the auto-start installer (token, ngrok domain).
+# Optional local credentials/config.
 .env.local
-.ngrok-connector.txt
 
 # Cached course outline HTML/text. Treat as private course material.
 cache/
 
 *.log
 .DS_Store
-logs/

@@ -7,14 +7,14 @@ description: Connect the waterloo-learn MCP server to the Claude Desktop app. Us
 
 Registers this project's MCP server with the Claude Desktop app so the LEARN
 tools (`list_courses`, `get_announcements`, `get_content`, `get_topic_file`,
-`get_grades`, `get_assignments`, `get_upcoming`) appear in Claude Desktop chats. `get_topic_file`
+`get_grades`, `get_assignments`, `get_upcoming`, `get_course_outline`,
+`search_drive_files`, `get_drive_file`) appear in Claude Desktop chats. `get_topic_file`
 returns lecture slides as images, so asking things like *"summarize my last
 lesson"* or *"what's the diagram on slide 4?"* works without uploading the PDF.
 
 The server is a **local stdio** server. Claude Desktop launches it as a child
-process via an entry in its config file. This is different from ChatGPT desktop,
-which uses its own connector UI and generally expects a remote (HTTP/SSE) server
-— this skill does **not** apply to ChatGPT.
+process via an entry in its config file. ChatGPT desktop and Codex can use the
+same local transport through their MCP configuration.
 
 ## Config file location
 
@@ -88,7 +88,7 @@ not just closing the window) and reopen it.
 ### 5. Verify
 
 In Claude Desktop, open the tools/connectors menu — `waterloo-learn` should be
-listed with its 7 tools. Or just ask: *"What courses am I taking on LEARN?"* and
+listed with its 10 tools. Or just ask: *"What courses am I taking on LEARN?"* and
 confirm it invokes `list_courses`.
 
 ## Troubleshooting

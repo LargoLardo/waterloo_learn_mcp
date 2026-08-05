@@ -5,9 +5,8 @@ import { fileURLToPath } from 'node:url';
 /**
  * Minimal .env.local loader (no dependency). Reads KEY=VALUE lines from the
  * project root's .env.local and sets any that aren't already in the
- * environment. Comments (#…) and blank lines are ignored. This lets the HTTP
- * server pick up LEARN_MCP_TOKEN / PORT written by scripts/web-setup.sh
- * without the launcher having to export them.
+ * environment. Comments (#…) and blank lines are ignored so login and optional
+ * Google Drive settings work without another dependency.
  */
 export function loadEnvLocal(): void {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');

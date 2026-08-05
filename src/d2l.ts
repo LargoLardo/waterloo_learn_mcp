@@ -627,6 +627,8 @@ async function findSoffice(): Promise<string | null> {
     '/usr/bin/soffice',
     '/usr/local/bin/soffice',
     '/opt/homebrew/bin/soffice',
+    'C:\\Program Files\\LibreOffice\\program\\soffice.exe',
+    'C:\\Program Files (x86)\\LibreOffice\\program\\soffice.exe',
   ];
   for (const bin of candidates) {
     try {
@@ -644,7 +646,8 @@ async function pptxToPdf(pptx: Buffer, filename: string): Promise<Buffer> {
   if (!soffice) {
     throw new Error(
       'This topic is a PowerPoint file, and rendering it needs LibreOffice. ' +
-        'Install it with `brew install --cask libreoffice` (macOS) and retry.',
+        'Install it with `winget install TheDocumentFoundation.LibreOffice` (Windows) ' +
+        'or `brew install --cask libreoffice` (macOS), then retry.',
     );
   }
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'learn-mcp-'));
