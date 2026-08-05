@@ -10,6 +10,8 @@ import {
   getUpcoming,
   listCoursesWithTitles,
 } from './d2l.js';
+import { getDriveFile, searchDriveFiles } from './drive.js';
+import { PdfRendererError } from './pdf.js';
 
 type ContentBlock =
   | { type: 'text'; text: string }
@@ -17,8 +19,12 @@ type ContentBlock =
 type ToolResult = { content: ContentBlock[]; structuredContent?: Record<string, unknown>; isError?: boolean };
 
 function errorResult(err: unknown): ToolResult {
+  const message = err instanceof Error ? err.message : String(err);
   return {
-    content: [{ type: 'text', text: err instanceof Error ? err.message : String(err) }],
+    content: [{
+      type: 'text',
+      text: err instanceof PdfRendererError ? `[${err.code}] stage=${err.stage}: ${message}` : message,
+    }],
     isError: true,
   };
 }
@@ -148,6 +154,22 @@ const upcomingOutput = z.object({
       description: z.string().nullable(),
     }),
   ),
+});
+
+const driveFileOutput = z.object({
+  fileId: z.string(),
+  name: z.string(),
+  path: z.string(),
+  mimeType: z.string(),
+  size: z.number().int().nullable(),
+  modifiedTime: z.string().nullable(),
+  url: z.string(),
+});
+const driveSearchOutput = z.object({
+  query: z.string().nullable(),
+  folderIds: z.array(z.string()),
+  files: z.array(driveFileOutput),
+  indexedFiles: z.number().int(),
 });
 
 /** Build a fresh McpServer with all LEARN tools registered. */
@@ -307,6 +329,70 @@ export function createServer(): McpServer {
     },
     async ({ courseId }) =>
       runStructured(() => getCourseOutline(courseId), (outline) => ({ ...outline })),
+  );
+
+  server.registerTool(
+    'search_drive_files',
+    {
+      title: 'Search Past Assessments in Google Drive',
+      description:
+        'Recursively search the configured Google Drive folder for relevant past quizzes, tests, midterms, exams, ' +
+        'practice material, and solutions. Search by course code and useful terms, for example "CS 135 quiz" or ' +
+        '"MATH 136 midterm". With no query, returns assessment-like files. Use get_drive_file to inspect a result.',
+      inputSchema: z.object({
+        query: z.string().max(200).optional().describe('Course code and/or assessment terms, e.g. "CS 135 quiz"'),
+        limit: z.number().int().min(1).max(100).optional().describe('Maximum results to return (default 20)'),
+      }),
+      outputSchema: driveSearchOutput,
+    },
+    async ({ query, limit }) =>
+      runStructured(() => searchDriveFiles(query, limit), (result) => ({ ...result })),
+  );
+
+  server.registerTool(
+    'get_drive_file',
+    {
+      title: 'Get Google Drive File as Page Images',
+      description:
+        'Download and inspect a file returned by search_drive_files. PDFs, PowerPoints, Google Docs, and Google Slides ' +
+        'are rendered as readable page images. Access is restricted to files inside the configured Drive folder.',
+      inputSchema: z.object({
+        fileId: z.string().describe('The fileId returned by search_drive_files'),
+        pages: z
+          .string()
+          .optional()
+          .describe('Pages/slides to render, e.g. "4", "1-5", or "2,4,7-9". Default: first 30 pages.'),
+      }),
+      outputSchema: topicFileOutput,
+    },
+    async ({ fileId, pages }) => {
+      try {
+        const result = await getDriveFile(fileId, pages);
+        return {
+          structuredContent: {
+            filename: result.filename,
+            totalPages: result.totalPages,
+            pages: result.pages.map((page) => ({ page: page.page })),
+            ...(result.note ? { note: result.note } : {}),
+          },
+          content: [
+            {
+              type: 'text' as const,
+              text:
+                `${result.filename} - ${result.totalPages} page(s); showing ${result.pages.map((page) => page.page).join(', ')}.` +
+                (result.note ? ` ${result.note}` : ''),
+            },
+            ...result.pages.map((page) => ({
+              type: 'image' as const,
+              mimeType: 'image/png',
+              data: page.png.toString('base64'),
+            })),
+          ],
+        };
+      } catch (err) {
+        return errorResult(err);
+      }
+    },
   );
 
   return server;

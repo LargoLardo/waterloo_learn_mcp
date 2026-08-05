@@ -33,6 +33,28 @@ WATIAM_PASSWORD=your-watiam-password
 | `get_assignments` | `courseId` | Assignments with due dates, instructions, your submission status + files, released feedback |
 | `get_upcoming` | `courseId`, `daysAhead?` | Due dates / events (default 30 days) |
 | `get_course_outline` | `courseId` | Official course outline/syllabus text from the local cache, refreshing from Outline.uwaterloo.ca when missing |
+| `search_drive_files` | `query?`, `limit?` | Relevant past quizzes/exams and other files from the configured shared Drive folder |
+| `get_drive_file` | `fileId`, `pages?` | A Drive PDF/PPTX/Google Doc/Google Slides file rendered as page images |
+
+## Search past assessments in Google Drive
+
+The Drive tools recursively search the shared
+[Waterloo past-assessments folder](https://drive.google.com/drive/folders/1yYicgQ3n8z-DutH3-kVtatmAcxpHK3cf?usp=drive_link)
+by default. They use the official Google Drive API, so enable the Google Drive
+API in a Google Cloud project, create an API key, and add it to `.env.local`:
+
+```sh
+GOOGLE_DRIVE_API_KEY=your-google-api-key
+GOOGLE_DRIVE_FOLDER_IDS=1yYicgQ3n8z-DutH3-kVtatmAcxpHK3cf
+```
+
+The folder must be visible to the configured credential. Multiple folder IDs
+can be comma-separated. For a private folder, set `GOOGLE_DRIVE_ACCESS_TOKEN`
+instead of an API key, authorize it with the
+`https://www.googleapis.com/auth/drive.readonly` scope, and share the folder
+with that Google account. The narrower `drive.apps.readonly` scope cannot list
+an existing shared folder. Access is scoped in the MCP implementation:
+`get_drive_file` only opens files found inside the configured folder tree.
 
 ## Connect to Claude Desktop
 
@@ -156,7 +178,7 @@ tailscale funnel --bg 8787
 - `get_course_outline` reads `cache/outlines/` first. Cached outlines are checked against the published revision date and automatically refetched when the instructor publishes a new revision. If a course is not cached, it checks Outline.uwaterloo.ca's enrolled-course viewer, then falls back to outline links posted in LEARN content. If neither exists, look for an uploaded outline/syllabus PDF in `get_content`.
 - `get_topic_file` returns slides as **images** so the model can read diagrams, not just text. PDFs need nothing extra; PowerPoint topics additionally need [LibreOffice](https://www.libreoffice.org) (`brew install --cask libreoffice`) for the PPTX→PDF step. Works in Claude (Desktop + Claude.ai) and ChatGPT.
 - **"No valid LEARN session"** (or tools failing after weeks) = session expired → `npm run login` again. Independent of reboots.
-- Override with env vars: `LEARN_BASE_URL`, `LEARN_AUTH_FILE`, `LEARN_OUTLINE_CACHE_DIR`, `PORT`, `LEARN_MCP_TOKEN`, `WATIAM_USERNAME`, `WATIAM_PASSWORD`, `WATIAM_LOGIN_DOMAIN`.
+- Override with env vars: `LEARN_BASE_URL`, `LEARN_AUTH_FILE`, `LEARN_OUTLINE_CACHE_DIR`, `PORT`, `LEARN_MCP_TOKEN`, `WATIAM_USERNAME`, `WATIAM_PASSWORD`, `WATIAM_LOGIN_DOMAIN`, `GOOGLE_DRIVE_API_KEY`, `GOOGLE_DRIVE_ACCESS_TOKEN`, `GOOGLE_DRIVE_FOLDER_IDS`.
 
 ---
 

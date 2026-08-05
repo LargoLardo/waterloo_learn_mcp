@@ -4,7 +4,7 @@
   "description": "",
   "main": "dist/index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "npm run build && node --test tests/*.test.mjs",
     "build": "tsc",
     "login": "tsx scripts/login.ts",
     "start": "node dist/index.js",
@@ -31,7 +31,8 @@
   "homepage": "https://github.com/petersenmatthew/waterloo-learn-mcp#readme",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "pdf-to-png-converter": "^3.18.0",
+    "@napi-rs/canvas": "^0.1.100",
+    "pdfjs-dist": "^4.10.38",
     "playwright": "^1.60.0",
     "zod": "^4.4.3"
   },

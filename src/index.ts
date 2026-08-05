@@ -2,8 +2,10 @@
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { createServer } from './server.js';
 import { closeBrowser } from './session.js';
+import { initializePdfRenderer } from './pdf.js';
 
 async function main() {
+  await initializePdfRenderer();
   const server = createServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);

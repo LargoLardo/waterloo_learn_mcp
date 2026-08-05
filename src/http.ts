@@ -8,6 +8,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { createServer } from './server.js';
 import { closeBrowser } from './session.js';
 import { loadEnvLocal } from './env.js';
+import { initializePdfRenderer } from './pdf.js';
 
 loadEnvLocal();
 
@@ -551,6 +552,8 @@ const httpServer = createHttpServer(async (req, res) => {
     }
   }
 });
+
+await initializePdfRenderer();
 
 httpServer.listen(PORT, () => {
   console.error(`waterloo-learn MCP server (HTTP) listening on http://localhost:${PORT}${PATHNAME}`);

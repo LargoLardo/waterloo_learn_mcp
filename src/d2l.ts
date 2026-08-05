@@ -3,8 +3,8 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { pdfToPng } from 'pdf-to-png-converter';
 import { BASE_URL, LOGIN_HELP, OUTLINE_CACHE_DIR } from './config.js';
+import { pdfToPng } from './pdf.js';
 import { apiGet, apiGetBinary, apiVersion, AuthError, getContext, newPage } from './session.js';
 
 const execFileAsync = promisify(execFile);
