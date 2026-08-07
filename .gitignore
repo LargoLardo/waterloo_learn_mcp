@@ -12,3 +12,5 @@ cache/
 
 *.log
 .DS_Store
+
+graphify-out/

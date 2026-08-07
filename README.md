@@ -36,6 +36,11 @@ terminal to print `Setup complete`. Setup installs dependencies, builds the
 server, saves the LEARN session to ignored `auth.json`, and registers the local
 MCP in the configuration shared by ChatGPT desktop and Codex.
 
+> **At the start of every study session:** run `npm run login`, complete WatIAM
+> and Duo, then fully quit and reopen ChatGPT desktop. The running MCP caches its
+> LEARN session, so restarting ChatGPT makes it load the fresh `auth.json` and
+> prevents stale authentication from blocking its tools.
+
 ### 3. Enable and test it in ChatGPT desktop
 
 1. Fully quit ChatGPT desktop, including its Windows system-tray process, then
@@ -68,8 +73,8 @@ codex mcp add waterloo-learn-mcp -- node C:\absolute\path\to\waterloo_learn_mcp\
 codex mcp list
 ```
 
-Then fully restart ChatGPT desktop. Refresh an expired LEARN session at any
-time with `npm run login`.
+Then fully restart ChatGPT desktop. Whenever you run `npm run login`, restart
+ChatGPT desktop afterward so the MCP loads the refreshed session.
 
 ## Authentication
 
