@@ -193,6 +193,6 @@ if (outlineSessionCaptured) {
   }
 }
 
-console.log('You can close this message; the MCP server will now work headless.');
+console.log('Session refreshed. Running MCP servers will load it on their next tool call; no ChatGPT restart needed.');
 
 await browser.close();

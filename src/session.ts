@@ -6,16 +6,23 @@ export class AuthError extends Error {}
 
 let browser: Browser | null = null;
 let context: BrowserContext | null = null;
+let authMtimeMs = 0;
 
 export async function getContext(): Promise<BrowserContext> {
   if (!fs.existsSync(AUTH_FILE)) {
     throw new AuthError(LOGIN_HELP);
+  }
+  const currentAuthMtimeMs = fs.statSync(AUTH_FILE).mtimeMs;
+  if (context && currentAuthMtimeMs !== authMtimeMs) {
+    await context.close().catch(() => {});
+    context = null;
   }
   if (!browser) {
     browser = await chromium.launch({ headless: true });
   }
   if (!context) {
     context = await browser.newContext({ storageState: AUTH_FILE });
+    authMtimeMs = currentAuthMtimeMs;
   }
   return context;
 }
@@ -30,6 +37,7 @@ export async function closeBrowser(): Promise<void> {
   await browser?.close().catch(() => {});
   context = null;
   browser = null;
+  authMtimeMs = 0;
 }
 
 /**
