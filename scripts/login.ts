@@ -193,6 +193,9 @@ if (outlineSessionCaptured) {
   }
 }
 
-console.log('Session refreshed. Running MCP servers will load it on their next tool call; no ChatGPT restart needed.');
+console.log(
+  'Session refreshed. Already-running MCP servers will load it on their next tool call. ' +
+    'Checking the saved MCP registration next...',
+);
 
 await browser.close();

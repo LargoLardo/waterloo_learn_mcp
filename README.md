@@ -37,8 +37,10 @@ server, saves the LEARN session to ignored `auth.json`, and registers the local
 MCP in the configuration shared by ChatGPT desktop and Codex.
 
 > **At the start of every study session:** run `npm run login` and complete
-> WatIAM and Duo. Running MCP processes detect the refreshed `auth.json` on the
-> next tool call, so you do not need to restart ChatGPT desktop.
+> WatIAM and Duo. The command refreshes `auth.json` and also repairs a missing
+> Codex MCP registration. Running MCP processes detect refreshed authentication
+> on the next tool call. If registration had to be repaired, the command tells
+> you to restart ChatGPT/Codex once so it can load the restored server.
 
 ### 3. Enable and test it in ChatGPT desktop
 
@@ -67,13 +69,17 @@ If automatic setup reaches the login step but the MCP does not appear, run:
 npm install
 npx playwright install chromium
 npm run build
-npm run login
-codex mcp add waterloo-learn-mcp -- node C:\absolute\path\to\waterloo_learn_mcp\dist\index.js
+npm run register
 codex mcp list
 ```
 
 Then fully restart ChatGPT desktop once to load the MCP registration. Later
-`npm run login` refreshes the running MCP automatically without another restart.
+`npm run login` refreshes the running MCP and verifies that its registration is
+still present. It restores a missing entry without first deleting healthy MCP
+configuration.
+
+Run `npm run login` separately whenever the saved WatIAM/Duo session needs to
+be refreshed; it performs the same registration check after saving the session.
 
 ## Authentication
 

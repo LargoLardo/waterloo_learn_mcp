@@ -7,7 +7,8 @@
     "test": "npm run build && node --test tests/*.test.mjs",
     "setup": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup.ps1",
     "build": "tsc",
-    "login": "tsx scripts/login.ts",
+    "login": "tsx scripts/login.ts && npm run register",
+    "register": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/register.ps1",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts"
   },
