@@ -55,8 +55,8 @@ export async function apiGet<T>(apiPath: string): Promise<T> {
   if (res.status() >= 300 && res.status() < 400) {
     throw new AuthError(`Session expired (got redirect from ${apiPath}). ${LOGIN_HELP}`);
   }
-  if (res.status() === 401) {
-    throw new AuthError(`Session rejected (401 from ${apiPath}). ${LOGIN_HELP}`);
+  if (res.status() === 401 || res.status() === 403) {
+    throw new AuthError(`LEARN rejected the saved session (${res.status()} from ${apiPath}). ${LOGIN_HELP}`);
   }
   if (!res.ok()) {
     throw new Error(`LEARN API error ${res.status()} for ${apiPath}: ${(await res.text()).slice(0, 300)}`);
@@ -85,8 +85,8 @@ export async function apiGetBinary(apiPath: string): Promise<BinaryResponse> {
   if (res.status() >= 300 && res.status() < 400) {
     throw new AuthError(`Session expired (got redirect from ${apiPath}). ${LOGIN_HELP}`);
   }
-  if (res.status() === 401) {
-    throw new AuthError(`Session rejected (401 from ${apiPath}). ${LOGIN_HELP}`);
+  if (res.status() === 401 || res.status() === 403) {
+    throw new AuthError(`LEARN rejected the saved session (${res.status()} from ${apiPath}). ${LOGIN_HELP}`);
   }
   if (!res.ok()) {
     throw new Error(`LEARN file error ${res.status()} for ${apiPath}: ${(await res.text()).slice(0, 300)}`);

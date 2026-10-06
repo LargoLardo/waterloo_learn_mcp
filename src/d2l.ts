@@ -600,9 +600,15 @@ export interface TopicFileResult {
   filename: string;
   totalPages: number;
   /** Pages actually rendered (1-based numbers matching slide numbers). */
-  pages: { page: number; png: Buffer }[];
+  pages: { page: number; png: Buffer; text: string }[];
   /** Set when more pages exist than were rendered. */
   note?: string;
+}
+
+export interface TopicTextResult {
+  filename: string;
+  totalPages: number;
+  pages: { page: number; text: string }[];
 }
 
 /** Parse "4", "1-5", or "2,4,7-9" into a sorted list of unique 1-based page numbers. */
@@ -619,7 +625,7 @@ function parsePages(spec: string): number[] {
   return [...pages].sort((a, b) => a - b);
 }
 
-/** Find a LibreOffice binary for PPTX→PDF conversion, or null if not installed. */
+/** Find a LibreOffice binary for Office→PDF conversion, or null if not installed. */
 async function findSoffice(): Promise<string | null> {
   const candidates = [
     'soffice',
@@ -641,11 +647,11 @@ async function findSoffice(): Promise<string | null> {
   return null;
 }
 
-async function pptxToPdf(pptx: Buffer, filename: string): Promise<Buffer> {
+async function officeToPdf(input: Buffer, filename: string): Promise<Buffer> {
   const soffice = await findSoffice();
   if (!soffice) {
     throw new Error(
-      'This topic is a PowerPoint file, and rendering it needs LibreOffice. ' +
+      'This topic is a PowerPoint or Word file, and rendering it needs LibreOffice. ' +
         'Install it with `winget install TheDocumentFoundation.LibreOffice` (Windows) ' +
         'or `brew install --cask libreoffice` (macOS), then retry.',
     );
@@ -653,7 +659,7 @@ async function pptxToPdf(pptx: Buffer, filename: string): Promise<Buffer> {
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'learn-mcp-'));
   try {
     const inputPath = path.join(tmpDir, filename.replace(/[/\\]/g, '_') || 'slides.pptx');
-    await fs.writeFile(inputPath, pptx);
+    await fs.writeFile(inputPath, input);
     await execFileAsync(soffice, ['--headless', '--convert-to', 'pdf', '--outdir', tmpDir, inputPath], {
       timeout: 120_000,
     });
@@ -666,16 +672,7 @@ async function pptxToPdf(pptx: Buffer, filename: string): Promise<Buffer> {
   }
 }
 
-/**
- * Download a topic's file and render it to one PNG per page/slide, so the
- * model can read both the text and the diagrams. PDFs render directly;
- * PPT/PPTX go through LibreOffice → PDF first.
- */
-export async function getTopicFile(
-  courseId: number,
-  topicId: string,
-  pagesSpec?: string,
-): Promise<TopicFileResult> {
+async function downloadTopicPdf(courseId: number, topicId: string): Promise<{ filename: string; pdf: Buffer }> {
   const le = await apiVersion('le');
   let file;
   try {
@@ -691,18 +688,40 @@ export async function getTopicFile(
   const ext = path.extname(filename).toLowerCase();
   const isPdf = ext === '.pdf' || file.contentType.includes('application/pdf') || file.body.subarray(0, 4).toString() === '%PDF';
   const isPpt = ext === '.pptx' || ext === '.ppt' || file.contentType.includes('presentation');
+  const isWord = ext === '.docx' || ext === '.doc' || file.contentType.includes('wordprocessingml');
 
   let pdf: Buffer;
   if (isPdf) {
     pdf = file.body;
-  } else if (isPpt) {
-    pdf = await pptxToPdf(file.body, filename);
+  } else if (isPpt || isWord) {
+    pdf = await officeToPdf(file.body, filename);
   } else {
     throw new Error(
-      `Topic file "${filename}" (${file.contentType || 'unknown type'}) is not a PDF or PowerPoint — ` +
+      `Topic file "${filename}" (${file.contentType || 'unknown type'}) is not a PDF, PowerPoint, or Word document — ` +
         'only those can be rendered to images. Use get_content for its URL instead.',
     );
   }
+  return { filename, pdf };
+}
+
+/** Extract every page's text without rendering images (used by bulk indexing). */
+export async function getTopicText(courseId: number, topicId: string): Promise<TopicTextResult> {
+  const { filename, pdf } = await downloadTopicPdf(courseId, topicId);
+  const pages = await pdfToPng(pdf, { returnMetadataOnly: true, extractText: true });
+  return {
+    filename,
+    totalPages: pages.length,
+    pages: pages.map((page) => ({ page: page.pageNumber, text: page.text ?? '' })),
+  };
+}
+
+/** Return page text and images; PowerPoint/Word files first go through LibreOffice. */
+export async function getTopicFile(
+  courseId: number,
+  topicId: string,
+  pagesSpec?: string,
+): Promise<TopicFileResult> {
+  const { filename, pdf } = await downloadTopicPdf(courseId, topicId);
 
   const meta = await pdfToPng(pdf, { returnMetadataOnly: true, viewportScale: 1 });
   const totalPages = meta.length;
@@ -721,13 +740,13 @@ export async function getTopicFile(
       `Rendered the first ${MAX_PAGES} of ${totalPages} pages. ` +
       `Call again with pages="${pagesToProcess[MAX_PAGES - 1] + 1}-${totalPages}" for the rest.`;
   }
-  const rendered = await pdfToPng(pdf, { viewportScale, pagesToProcess });
+  const rendered = await pdfToPng(pdf, { viewportScale, pagesToProcess, extractText: true });
   return {
     filename,
     totalPages,
     pages: rendered
       .filter((p) => p.content)
-      .map((p) => ({ page: p.pageNumber, png: p.content as Buffer })),
+      .map((p) => ({ page: p.pageNumber, png: p.content as Buffer, text: p.text ?? '' })),
     note,
   };
 }

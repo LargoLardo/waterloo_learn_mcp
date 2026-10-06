@@ -13,6 +13,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 export const PROJECT_ROOT = path.resolve(here, '..');
 export const AUTH_FILE = process.env.LEARN_AUTH_FILE ?? path.join(PROJECT_ROOT, 'auth.json');
 export const OUTLINE_CACHE_DIR = process.env.LEARN_OUTLINE_CACHE_DIR ?? path.join(PROJECT_ROOT, 'cache', 'outlines');
+export const MATERIAL_CACHE_DIR = process.env.LEARN_MATERIAL_CACHE_DIR ?? path.join(PROJECT_ROOT, 'cache', 'materials');
 export const GOOGLE_DRIVE_API_KEY = process.env.GOOGLE_DRIVE_API_KEY;
 export const GOOGLE_DRIVE_ACCESS_TOKEN = process.env.GOOGLE_DRIVE_ACCESS_TOKEN;
 export const GOOGLE_DRIVE_FOLDER_IDS = (

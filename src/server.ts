@@ -11,6 +11,8 @@ import {
   listCoursesWithTitles,
 } from './d2l.js';
 import { getDriveFile, searchDriveFiles } from './drive.js';
+import { getExamContext } from './context.js';
+import { searchCourseMaterials } from './materials.js';
 import { PdfRendererError } from './pdf.js';
 
 type ContentBlock =
@@ -91,7 +93,7 @@ const contentOutput = z.object({ modules: z.array(contentModuleOutput) });
 const topicFileOutput = z.object({
   filename: z.string(),
   totalPages: z.number().int(),
-  pages: z.array(z.object({ page: z.number().int() })),
+  pages: z.array(z.object({ page: z.number().int(), text: z.string() })),
   note: z.string().optional(),
 });
 
@@ -171,6 +173,8 @@ const driveSearchOutput = z.object({
   files: z.array(driveFileOutput),
   indexedFiles: z.number().int(),
 });
+const examContextOutput = z.object({ context: z.unknown() });
+const materialSearchOutput = z.object({ search: z.unknown() });
 
 /** Build a fresh McpServer with all LEARN tools registered. */
 export function createServer(): McpServer {
@@ -190,6 +194,52 @@ export function createServer(): McpServer {
   );
 
   server.registerTool(
+    'get_exam_context',
+    {
+      title: 'Prepare Exam Study Context',
+      description:
+        'FIRST tool to use when a student asks for a mock/practice exam, study guide, exam review, or exam scope. ' +
+        'Accepts a human course code/name such as "SYDE 162" (no list_courses call required), then gathers the ' +
+        'relevant instructor announcements, exam calendar events, official course outline, complete content map, ' +
+        'prioritized lesson-file topic IDs, and matching past assessments. Sources fail independently so partial ' +
+        'context is still returned with warnings. Follow recommendedFileCalls with get_topic_file before generating ' +
+        'questions, and use get_drive_file for any useful past-assessment results.',
+      inputSchema: z.object({
+        course: z
+          .union([z.string().min(1), z.number().int()])
+          .describe('Course code/name such as "SYDE 162", official title, or numeric courseId'),
+        assessment: z
+          .string()
+          .min(1)
+          .max(100)
+          .optional()
+          .describe('Assessment to prepare for, e.g. "final exam" or "midterm 2" (default: final exam)'),
+      }),
+      outputSchema: examContextOutput,
+    },
+    async ({ course, assessment }) => {
+      try {
+        const context = await getExamContext(course, assessment);
+        const summary = [
+          `Prepared ${context.assessment} context for ${context.course.name} (${context.course.ou}).`,
+          `${context.examSignals.announcements.length} relevant announcement(s), ` +
+            `${context.examSignals.upcomingEvents.length} exam event(s), ` +
+            `${context.studyMaterials.length} course material(s), ` +
+            `${context.pastAssessments.length} past assessment(s).`,
+          `Full outline, exam signals, material topic IDs, recommended file calls, and generation instructions are in structuredContent.context.`,
+          ...(context.warnings.length > 0 ? [`Warnings: ${context.warnings.join(' | ')}`] : []),
+        ].join('\n');
+        return {
+          structuredContent: { context },
+          content: [{ type: 'text' as const, text: summary }],
+        };
+      } catch (err) {
+        return errorResult(err);
+      }
+    },
+  );
+
+  server.registerTool(
     'get_announcements',
     {
       title: 'Get Announcements',
@@ -200,6 +250,56 @@ export function createServer(): McpServer {
       outputSchema: announcementsOutput,
     },
     async ({ courseId }) => runStructured(() => getAnnouncements(courseId), (announcements) => ({ announcements })),
+  );
+
+  server.registerTool(
+    'search_course_materials',
+    {
+      title: 'Search Across Course PDFs and Slides',
+      description:
+        'Use after get_exam_context to scan many posted lesson PDFs/PowerPoints/Word files without loading every page into the model. ' +
+        'On first use it downloads and text-indexes up to 40 files (configurable to 60) with a 24-hour private local cache, ' +
+        'then returns page-cited passages ranked for subject concepts from the exam scope. It also returns per-file keyword ' +
+        'summaries so the agent can decide which of 20+ large decks matter. Search using actual concepts such as ' +
+        '"signal detection attention memory", not merely "final exam". Open only relevant result pages with get_topic_file ' +
+        'to inspect diagrams. One unavailable/non-PDF topic does not fail the remaining index.',
+      inputSchema: z.object({
+        course: z
+          .union([z.string().min(1), z.number().int()])
+          .describe('Course code/name such as "SYDE 162", official title, or numeric courseId'),
+        query: z
+          .string()
+          .min(1)
+          .max(2_000)
+          .describe('Subject concepts, learning objectives, or scope wording to find across all lesson files'),
+        maxFiles: z.number().int().min(1).max(60).optional()
+          .describe('Maximum posted files to index (default 40; raise for courses with more files)'),
+        maxResults: z.number().int().min(1).max(50).optional()
+          .describe('Maximum relevant page passages to return (default 24)'),
+        refresh: z.boolean().optional()
+          .describe('Ignore the 24-hour text cache and redownload files (default false)'),
+      }),
+      outputSchema: materialSearchOutput,
+    },
+    async ({ course, query, maxFiles, maxResults, refresh }) => {
+      try {
+        const search = await searchCourseMaterials(course, query, { maxFiles, maxResults, refresh });
+        return {
+          structuredContent: { search },
+          content: [{
+            type: 'text' as const,
+            text:
+              `Searched ${search.indexedFiles} file(s) / ${search.totalPages} page(s) for "${query}"; ` +
+              `returned ${search.results.length} cited passage(s). ` +
+              `${search.cachedFiles} file(s) came from the private cache; ${search.failedFiles} failed. ` +
+              'Full material keyword summaries, passages, page citations, and image follow-up calls are in structuredContent.search.' +
+              (search.warnings.length > 0 ? ` Warnings: ${search.warnings.join(' | ')}` : ''),
+          }],
+        };
+      } catch (err) {
+        return errorResult(err);
+      }
+    },
   );
 
   server.registerTool(
@@ -223,8 +323,9 @@ export function createServer(): McpServer {
     {
       title: 'Get Topic File as Slide Images',
       description:
-        'Download a lecture file (PDF or PowerPoint) from course content and return each page/slide ' +
-        'as an image you can read — including diagrams and figures. topicId is the `id` of a topic from ' +
+        'Download a lecture file (PDF, PowerPoint, or Word) from course content and return each page/slide ' +
+        'as both searchable extracted text and an image — preserving diagrams and figures while making ' +
+        'large decks efficient to analyze. topicId is the `id` of a topic from ' +
         'get_content. Slide N = page N; pass pages like "4" or "2-6" to fetch specific slides instead of ' +
         'the whole deck. Use after get_content to answer: "Summarize lesson 2", "What is the diagram on slide 4?"',
       inputSchema: z.object({
@@ -243,7 +344,7 @@ export function createServer(): McpServer {
         const structuredContent = {
           filename: result.filename,
           totalPages: result.totalPages,
-          pages: result.pages.map((p) => ({ page: p.page })),
+          pages: result.pages.map((p) => ({ page: p.page, text: p.text })),
           ...(result.note ? { note: result.note } : {}),
         };
         const header =
@@ -355,7 +456,7 @@ export function createServer(): McpServer {
       title: 'Get Google Drive File as Page Images',
       description:
         'Download and inspect a file returned by search_drive_files. PDFs, PowerPoints, Google Docs, and Google Slides ' +
-        'are rendered as readable page images. Access is restricted to files inside the configured Drive folder.',
+        'return searchable page text plus rendered images. Access is restricted to files inside the configured Drive folder.',
       inputSchema: z.object({
         fileId: z.string().describe('The fileId returned by search_drive_files'),
         pages: z
@@ -372,7 +473,7 @@ export function createServer(): McpServer {
           structuredContent: {
             filename: result.filename,
             totalPages: result.totalPages,
-            pages: result.pages.map((page) => ({ page: page.page })),
+            pages: result.pages.map((page) => ({ page: page.page, text: page.text })),
             ...(result.note ? { note: result.note } : {}),
           },
           content: [

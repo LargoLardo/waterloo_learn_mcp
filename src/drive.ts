@@ -56,7 +56,7 @@ export interface DriveSearchResult {
 export interface DriveFileResult {
   filename: string;
   totalPages: number;
-  pages: { page: number; png: Buffer }[];
+  pages: { page: number; png: Buffer; text: string }[];
   note?: string;
 }
 
@@ -316,13 +316,13 @@ export async function getDriveFile(fileId: string, pagesSpec?: string): Promise<
     pagesToProcess = pagesToProcess.slice(0, MAX_PAGES);
     note = `Rendered the first ${MAX_PAGES} of ${totalPages} pages. Call again with a pages range for the rest.`;
   }
-  const rendered = await pdfToPng(pdf, { viewportScale, pagesToProcess });
+  const rendered = await pdfToPng(pdf, { viewportScale, pagesToProcess, extractText: true });
   return {
     filename: file.name,
     totalPages,
     pages: rendered
       .filter((page) => page.content)
-      .map((page) => ({ page: page.pageNumber, png: page.content as Buffer })),
+      .map((page) => ({ page: page.pageNumber, png: page.content as Buffer, text: page.text ?? '' })),
     note,
   };
 }

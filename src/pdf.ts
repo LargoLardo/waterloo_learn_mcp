@@ -22,6 +22,8 @@ export type PdfToPngOptions = {
   viewportScale?: number;
   pagesToProcess?: number[];
   returnMetadataOnly?: boolean;
+  /** Also extract the PDF text layer for efficient model search/summarization. */
+  extractText?: boolean;
 };
 
 export type PngPageOutput = {
@@ -31,6 +33,7 @@ export type PngPageOutput = {
   path: string;
   width: number;
   height: number;
+  text?: string;
 };
 
 function installPdfJsCanvasGlobals() {
@@ -113,6 +116,16 @@ export async function pdfToPng(
       const width = Math.ceil(viewport.width);
       const height = Math.ceil(viewport.height);
       let content: Buffer = Buffer.alloc(0);
+      let text: string | undefined;
+
+      if (options.extractText) {
+        const textContent = await page.getTextContent();
+        text = textContent.items
+          .map((item) => ('str' in item ? item.str : ''))
+          .join(' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+      }
 
       if (!options.returnMetadataOnly) {
         try {
@@ -125,7 +138,7 @@ export async function pdfToPng(
         }
       }
 
-      output.push({ pageNumber, name: `page-${pageNumber}.png`, content, path: '', width, height });
+      output.push({ pageNumber, name: `page-${pageNumber}.png`, content, path: '', width, height, text });
       page.cleanup();
     }
 

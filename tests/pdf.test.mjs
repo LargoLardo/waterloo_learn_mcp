@@ -1,11 +1,9 @@
+import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { initializePdfRenderer, pdfToPng } from '../dist/pdf.js';
 
-const onePagePdf = Buffer.from(
-  'JVBERi0xLjEKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCAyMDAgMjAwXSAvQ29udGVudHMgNCAwIFIgL1Jlc291cmNlcyA8PCAvRm9udCA8PCAvRjEgNSAwIFIgPj4gPj4gPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCA0NCA+PgpzdHJlYW0KQlQKL0YxIDI0IFRmCjUwIDEwMCBUZAooSGVsbG8pIFRqCkVUCmVuZHN0cmVhbQplbmRvYmoKNSAwIG9iago8PCAvVHlwZSAvRm9udCAvU3VidHlwZSAvVHlwZTEgL0Jhc2VGb250IC9IZWx2ZXRpY2EgPj4KZW5kb2JqCnhyZWYKMCA2CjAwMDAwMDAwMDAgNjU1MzUgZiAKMDAwMDAwMDAwOSAwMDAwMCBuIAowMDAwMDAwMDU4IDAwMDAwIG4gCjAwMDAwMDAxMTUgMDAwMDAgbiAKMDAwMDAwMDI1MSAwMDAwMCBuIAowMDAwMDAwMzQ1IDAwMDAwIG4gCnRyYWlsZXIKPDwgL1NpemUgNiAvUm9vdCAxIDAgUiA+PgpzdGFydHhyZWYKNDI1CiUlRU9G',
-  'base64',
-);
+const onePagePdf = await readFile(new URL('./fixtures/one-page.pdf', import.meta.url));
 
 test('pdfToPng renders PDFs in Node 20 without browser DOM globals', async () => {
   delete globalThis.DOMMatrix;
@@ -32,4 +30,15 @@ test('pdfToPng reads document metadata without rendering page images', async () 
   assert.equal(pages[0].width, 200);
   assert.equal(pages[0].height, 200);
   assert.equal(pages[0].content.length, 0);
+});
+
+test('pdfToPng can return each page text layer alongside its image', async () => {
+  const pages = await pdfToPng(onePagePdf, {
+    viewportScale: 0.25,
+    pagesToProcess: [1],
+    extractText: true,
+  });
+
+  assert.equal(pages[0].text, 'Hello');
+  assert.ok(pages[0].content.length > 0);
 });

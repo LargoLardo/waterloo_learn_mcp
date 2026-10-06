@@ -55,7 +55,7 @@ MCP in the configuration shared by ChatGPT desktop and Codex.
 Do not enable Developer mode or use **Plugins > +** to create a connection.
 That flow is for remote HTTPS MCP servers; this server is registered locally.
 
-PDF slides work immediately. PowerPoint files require LibreOffice:
+PDF slides work immediately. PowerPoint and Word files require LibreOffice:
 
 ```powershell
 winget install TheDocumentFoundation.LibreOffice
@@ -98,23 +98,40 @@ to ChatGPT so it can answer you.
 | Tool | Purpose |
 | --- | --- |
 | `list_courses` | List enrolled courses and IDs |
+| `get_exam_context` | Gather exam announcements, events, syllabus, lesson files, and past assessments by course code/name or ID |
+| `search_course_materials` | Search up to 60 course files and return relevant passages with file/page references |
 | `get_announcements` | Read announcements and attachments |
 | `get_content` | Browse modules, topics, files, and links |
-| `get_topic_file` | Render selected PDF/PPT/PPTX slides as images |
+| `get_topic_file` | Return selected PDF/PowerPoint/Word pages as text and images |
 | `get_grades` | Read grades, weights, and feedback |
 | `get_assignments` | Read assignments, submissions, and feedback |
 | `get_upcoming` | Read upcoming events and due dates |
 | `get_course_outline` | Read the official course outline/syllabus |
 | `search_drive_files` | Search an optional configured Drive folder |
-| `get_drive_file` | Render an allowed Drive file as page images |
+| `get_drive_file` | Return an allowed Drive file as page text and images |
 
 All tools are read-only. Slide tools accept pages such as `"4"`, `"2-6"`, or
 `"2,4,7-9"` and return up to 30 page images per call.
+
+For exam preparation, call `get_exam_context` with a course such as `"CS 135"`
+and an optional assessment such as `"midterm 2"` (default: `"final exam"`). It
+gathers the available sources in one call and reports warnings for missing
+sources, including optional Google Drive access.
+
+Then use `search_course_materials` with subject concepts from the exam scope.
+It indexes 40 files by default (`maxFiles` can be raised to 60) and caches
+extracted text locally for 24 hours. Results include file/page references and
+calls to `get_topic_file` for inspecting diagrams. Set `refresh: true` to
+redownload files before the cache expires. Scanned pages without a text layer
+still need visual inspection; this search does not perform OCR.
 
 ## Optional configuration
 
 Copy `.env.local.example` to `.env.local` only if you want login autofill,
 custom cache paths, or Google Drive search. `.env.local` is ignored by Git.
+
+`LEARN_MATERIAL_CACHE_DIR` overrides the extracted-text cache directory, which
+defaults to ignored `cache/materials/`. Treat it as private course material.
 
 For Drive search, enable the Google Drive API and set either
 `GOOGLE_DRIVE_API_KEY` for a public/shared folder or a short-lived
